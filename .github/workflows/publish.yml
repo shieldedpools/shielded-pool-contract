@@ -1,0 +1,33 @@
+name: Publish
+
+# Run by hand to publish the version in package.json, which can only happen once per version.
+# npm trusts this workflow, so no token is stored. First:
+#   1. Publish the first version by hand, because a trusted publisher needs a package to attach to.
+#   2. On npm, add a trusted publisher to the package, with this repository, publish.yml and the
+#      npm environment.
+#   3. Create a GitHub environment named npm, with required reviewers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: npm
+    steps:
+      - name: Require main
+        run: '[[ "$GITHUB_REF" == refs/heads/main ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: npm ci
+      # prepublishOnly builds and tests the contract first.
+      - run: npm publish

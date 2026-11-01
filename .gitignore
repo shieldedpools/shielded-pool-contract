@@ -1,0 +1,4 @@
+node_modules/
+release/
+contract/managed/
+.npmrc

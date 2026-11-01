@@ -1,0 +1,31 @@
+name: Deploy
+description: Builds and tests the contract, then deploys it with no maintenance authority.
+
+inputs:
+  network:
+    description: Network to deploy to, which scripts/deploy.ts has to know
+    required: true
+  seed:
+    description: Seed of the wallet that pays the fee
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup
+    - name: Build and test the contract
+      shell: bash
+      run: |
+        npm ci
+        npm run release
+    - name: Start the proof server
+      shell: bash
+      run: |
+        docker compose up -d --wait proof-server
+        curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:6300/version
+    - name: Deploy
+      shell: bash
+      env:
+        MIDNIGHT_NETWORK: ${{ inputs.network }}
+        MIDNIGHT_SEED: ${{ inputs.seed }}
+      run: npm run -s deploy >> "$GITHUB_STEP_SUMMARY"

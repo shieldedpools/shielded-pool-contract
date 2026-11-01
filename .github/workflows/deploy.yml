@@ -1,0 +1,36 @@
+name: Deploy
+
+# Run by hand once the target network runs ledger 9. First:
+#   1. Add the network to scripts/deploy.ts.
+#   2. Create a GitHub environment named after the network, with required reviewers.
+#   3. In it, set the MIDNIGHT_SEED secret.
+# Mainnet isn't an option: add it after an audit, once the Midnight packages are stable.
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Network to deploy to
+        type: choice
+        required: true
+        options:
+          - preview
+          - preprod
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.network }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.network }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/deploy
+        with:
+          network: ${{ inputs.network }}
+          seed: ${{ secrets.MIDNIGHT_SEED }}

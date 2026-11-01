@@ -1,0 +1,31 @@
+pragma language_version 0.27;
+
+import CompactStandardLibrary;
+
+// 1:1 wrapper for native unshielded tokens.
+// Each wrapped-token colour is derived from its underlying token and this contract.
+
+export circuit shield(token: Bytes<32>, amount: Uint<64>, nonce: Bytes<32>): ShieldedCoinInfo {
+  const underlying = disclose(token);
+  const value = disclose(amount);
+
+  receiveUnshielded(underlying, value);
+  return mintShieldedToken(
+    underlying,
+    value,
+    disclose(nonce),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+  );
+}
+
+export circuit unshield(token: Bytes<32>, coin: ShieldedCoinInfo, recipient: UserAddress): [] {
+  const underlying = disclose(token);
+  const paid = disclose(coin);
+  const to = disclose(recipient);
+  // Only this contract's wrapped form of `token` may release its backing.
+  assert(paid.color == tokenType(underlying, kernel.self()), "shielded-pools: wrong token");
+  assert(to != default<UserAddress>, "shielded-pools: zero recipient");
+
+  receiveShielded(paid);
+  sendUnshielded(underlying, paid.value, right<ContractAddress, UserAddress>(to));
+}

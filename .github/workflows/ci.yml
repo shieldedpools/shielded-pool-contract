@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start the local network
+        run: |
+          docker compose up -d --wait node indexer
+          curl -fsS --retry 60 --retry-all-errors --retry-delay 2 -o /dev/null \
+            -H 'content-type: application/json' -d '{"query":"{block{height}}"}' \
+            http://127.0.0.1:8088/api/v4/graphql
+      - uses: ./.github/actions/deploy
+        with:
+          network: undeployed
+          # A public genesis seed that only the local network funds.
+          seed: "0000000000000000000000000000000000000000000000000000000000000001"
