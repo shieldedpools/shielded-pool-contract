@@ -58,7 +58,7 @@ export MIDNIGHT_SEED=00000000000000000000000000000000000000000000000000000000000
 npm run -s deploy
 ```
 
-This pays the fee from the wallet with that seed, using a proof server on `127.0.0.1:6300`, and fails unless the chain shows that nobody can change the contract. No maintenance key is ever created. `MIDNIGHT_NETWORK` picks the network, which defaults to the local one. Public networks use the [deploy workflow](.github/workflows/deploy.yml) once they run ledger 9.
+This pays the fee from the wallet with that seed, using a proof server on `127.0.0.1:6300`, and fails unless the chain shows that nobody can change the contract. No maintenance key is ever created. `MIDNIGHT_NETWORK` picks the network, which defaults to the local one. Public networks use the [deploy workflow](.github/workflows/deploy.yml).
 
 ## License
 

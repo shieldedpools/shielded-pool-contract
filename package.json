@@ -28,7 +28,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "compact compile +0.35.0 contract/shielded-pools.compact contract/managed/shielded-pools",
+    "build": "compact compile +0.36.0 contract/shielded-pools.compact contract/managed/shielded-pools",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
     "deploy": "node --disable-warning=ExperimentalWarning scripts/deploy.ts",
     "prepublishOnly": "npm run build && npm test",
@@ -38,7 +38,7 @@
     "effect": "3.22.4"
   },
   "dependencies": {
-    "@midnight-ntwrk/compact-runtime": "0.20.0"
+    "@midnight-ntwrk/compact-runtime": "0.21.0"
   },
   "devDependencies": {
     "@midnightntwrk/ledger-v9": "1.0.0-rc.5",
@@ -49,6 +49,7 @@
     "@midnightntwrk/wallet-sdk-shielded": "4.0.0-rc.1",
     "@midnightntwrk/wallet-sdk-unshielded-wallet": "4.0.0-rc.1",
     "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
     "rxjs": "7.8.2",
     "ws": "8.22.0"
   }

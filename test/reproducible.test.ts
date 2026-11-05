@@ -30,7 +30,7 @@ it("reproduces every artifact from the source", (t) => {
   );
   execFileSync(
     "compact",
-    ["compile", "+0.35.0", "contract/shielded-pools.compact", "contract/managed/shielded-pools"],
+    ["compile", "+0.36.0", "contract/shielded-pools.compact", "contract/managed/shielded-pools"],
     { cwd: workspace },
   );
 

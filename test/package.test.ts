@@ -13,16 +13,18 @@ const root = path.resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 describe("release artifacts", () => {
-  it("record the pinned compiler and ledger", () => {
-    assert.equal(info["compiler-version"], "0.35.0");
-    assert.equal(info["runtime-version"], "0.20.0");
-    const ledger = execFileSync("compact", ["compile", "+0.35.0", "--ledger-version"], {
+  it("record the pinned compiler and proving backend", () => {
+    assert.equal(info["compiler-version"], "0.36.0");
+    assert.equal(info["language-version"], "0.28.0");
+    assert.equal(info["runtime-version"], "0.21.0");
+    // From 0.36 this prints the zkir-v3 version, the only backend, not the ledger's.
+    const zkir = execFileSync("compact", ["compile", "+0.36.0", "--ledger-version"], {
       encoding: "utf8",
     });
-    assert.match(ledger, /^ledger-9\./);
-    assert.match(manifest.scripts.build, /\+0\.35\.0/);
+    assert.match(zkir, /^zkir-3\./);
+    assert.match(manifest.scripts.build, /\+0\.36\.0/);
     const setup = fs.readFileSync(path.join(root, ".github/actions/setup/action.yml"), "utf8");
-    assert.match(setup, /compact" update 0\.35\.0 /);
+    assert.match(setup, /compact" update 0\.36\.0 /);
   });
 
   it("export the generated contract", () => {

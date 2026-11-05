@@ -1,6 +1,6 @@
 name: Deploy
 
-# Run by hand once the target network runs ledger 9. First:
+# Run by hand. First:
 #   1. Add the network to scripts/deploy.ts.
 #   2. Create a GitHub environment named after the network, with required reviewers.
 #   3. In it, set the MIDNIGHT_SEED secret.

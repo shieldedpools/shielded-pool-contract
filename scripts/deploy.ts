@@ -27,8 +27,7 @@ const TX_TTL_MS = 30 * 60 * 1000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const V9 = DefaultForkSchedule.v9;
 
-// Only the local network runs ledger 9 today, and a Compact 0.35 contract can't deploy to a
-// ledger 8 network. Add the public ones when they upgrade. Mainnet also waits for an audit.
+// Add a public network here before its first deploy. Mainnet waits for an audit.
 const NETWORKS: Record<string, { node: string; indexerHttp: string; indexerWs: string }> = {
   undeployed: {
     node: "http://127.0.0.1:9944",
