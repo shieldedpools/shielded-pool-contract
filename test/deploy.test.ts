@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { immutableDeployment, isImmutable } from "../scripts/deploy.ts";
 
 const keys = path.resolve(import.meta.dirname, "../contract/managed/shielded-pools/keys");
-const key = (byte: number) => ({ tag: "schnorr", value: byte.toString(16).padStart(64, "0") });
+const key = (byte: number) => ({ tag: "schnorr" as const, value: byte.toString(16).padStart(64, "0") });
 const coinPublicKey = "00".repeat(32);
 
 describe("deployment", () => {

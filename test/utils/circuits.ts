@@ -16,6 +16,26 @@ export const WALLET = { bytes: bytes(7) };
 // An unshielded address for `unshield`, and a coin key for `shield`.
 export const RECIPIENT = { bytes: bytes(3) };
 export const SHIELDED_RECIPIENT = { bytes: bytes(4) };
+
+type Bytes = { bytes: Uint8Array };
+// Recipients as the generated code takes them. `junk` fills the inactive side, which the
+// runtime refuses but a prover could still put in the witness.
+export const shieldTo = {
+  user: (key: Bytes, junk = bytes(0)) => ({ is_left: true, left: key, right: { bytes: junk } }),
+  contract: (address: string, junk = bytes(0)) => ({
+    is_left: false,
+    left: { bytes: junk },
+    right: { bytes: Buffer.from(address, "hex") },
+  }),
+};
+export const unshieldTo = {
+  user: (address: Bytes, junk = bytes(0)) => ({ is_left: false, left: { bytes: junk }, right: address }),
+  contract: (address: string, junk = bytes(0)) => ({
+    is_left: true,
+    left: { bytes: Buffer.from(address, "hex") },
+    right: { bytes: junk },
+  }),
+};
 export const ZERO_KEY = { bytes: bytes(0) };
 
 export const contract = new Contract({});

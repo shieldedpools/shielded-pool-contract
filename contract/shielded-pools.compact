@@ -5,36 +5,42 @@ import CompactStandardLibrary;
 // 1:1 wrapper for native unshielded tokens.
 // Each wrapped-token colour is derived from its underlying token and this contract.
 
+// Recipients are an Either, so a contract can take custody too. Checks on one look only at its
+// active side: the other side is unconstrained, so comparing whole values could be dodged.
+
 export circuit shield(
   token: Bytes<32>,
   amount: Uint<64>,
   nonce: Bytes<32>,
-  recipient: ZswapCoinPublicKey
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>
 ): ShieldedCoinInfo {
   const underlying = disclose(token);
   const value = disclose(amount);
   // disclose() only acknowledges that the recipient goes into the coin's commitment, which
-  // reaches the ledger. It stays hidden as long as `nonce` is fresh and secret.
+  // reaches the ledger. A user's key stays hidden as long as `nonce` is fresh and secret. A
+  // contract has to claim the coin in its own call, which shows its address anyway.
   const to = disclose(recipient);
-  assert(to != default<ZswapCoinPublicKey>, "shielded-pools: zero recipient");
+  assert(!to.is_left || to.left != default<ZswapCoinPublicKey>, "shielded-pools: zero recipient");
+  // This contract has no circuit to spend a coin it owns, so minting to it would lock the backing.
+  assert(to.is_left || to.right != kernel.self(), "shielded-pools: recipient is this contract");
 
   receiveUnshielded(underlying, value);
-  return mintShieldedToken(
-    underlying,
-    value,
-    disclose(nonce),
-    left<ZswapCoinPublicKey, ContractAddress>(to)
-  );
+  return mintShieldedToken(underlying, value, disclose(nonce), to);
 }
 
-export circuit unshield(token: Bytes<32>, coin: ShieldedCoinInfo, recipient: UserAddress): [] {
+export circuit unshield(
+  token: Bytes<32>,
+  coin: ShieldedCoinInfo,
+  recipient: Either<ContractAddress, UserAddress>
+): [] {
   const underlying = disclose(token);
   const paid = disclose(coin);
   const to = disclose(recipient);
   // Only this contract's wrapped form of `token` may release its backing.
   assert(paid.color == tokenType(underlying, kernel.self()), "shielded-pools: wrong token");
-  assert(to != default<UserAddress>, "shielded-pools: zero recipient");
+  assert(to.is_left || to.right != default<UserAddress>, "shielded-pools: zero recipient");
+  assert(!to.is_left || to.left != kernel.self(), "shielded-pools: recipient is this contract");
 
   receiveShielded(paid);
-  sendUnshielded(underlying, paid.value, right<ContractAddress, UserAddress>(to));
+  sendUnshielded(underlying, paid.value, to);
 }
