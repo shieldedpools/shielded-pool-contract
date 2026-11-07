@@ -74,7 +74,14 @@ export MIDNIGHT_SEED=00000000000000000000000000000000000000000000000000000000000
 npm run -s deploy
 ```
 
-This pays the fee from the wallet with that seed, using a proof server on `127.0.0.1:6300`, and fails unless the chain shows that nobody can change the contract. No maintenance key is ever created. `MIDNIGHT_NETWORK` picks the network, which defaults to the local one. Public networks use the [deploy workflow](.github/workflows/deploy.yml).
+This pays the fee from the wallet with that seed, using a proof server on `127.0.0.1:6300`. It fails unless the chain shows that nobody can change the contract and that its verifier keys are the ones built. No maintenance key is ever created.
+
+- `MIDNIGHT_SEED` is the paying wallet's hex seed or BIP39 phrase. A phrase gives the same wallet as 1AM.
+- `MIDNIGHT_NETWORK` picks the network: `undeployed` (the local one, and the default), `preview` or `mainnet`. Preprod isn't supported while it stays on ledger 8, because this contract is built for ledger 9.
+- Mainnet is served through Blockfrost, so it needs `BLOCKFROST_PROJECT_ID` set to a mainnet token.
+- `CONTRACT_DIR` deploys another compiled contract instead of `contract/managed/shielded-pools`.
+
+Public networks use the [deploy workflow](.github/workflows/deploy.yml). Run it from `main` with a published version. It builds that version from its tag, and refuses to deploy unless the build matches the npm package byte for byte.
 
 ## License
 

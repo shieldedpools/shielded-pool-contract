@@ -1,12 +1,16 @@
 // Deploys the contract with no maintenance authority, so nobody can ever change it.
-// Build first, because this deploys the verifier keys in contract/managed.
+// Build first, because this deploys the compiled contract in contract/managed, or the one that
+// CONTRACT_DIR names.
 import { Buffer } from "node:buffer";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { createConstructorContext } from "@midnight-ntwrk/compact-runtime";
 import * as ledger from "@midnightntwrk/ledger-v9";
+import * as bip39 from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { NoOpTransactionHistoryStorage, WalletTransaction } from "@midnightntwrk/wallet-sdk-abstractions";
 import { DustWallet } from "@midnightntwrk/wallet-sdk-dust-wallet";
 import { DefaultForkSchedule, WalletFacade } from "@midnightntwrk/wallet-sdk-facade";
@@ -17,22 +21,43 @@ import {
   PublicKey,
   UnshieldedWallet,
 } from "@midnightntwrk/wallet-sdk-unshielded-wallet";
-import { Contract } from "@shieldedpools/contracts";
 import * as Rx from "rxjs";
 import { WebSocket } from "ws";
 
-const KEYS_DIR = path.resolve(import.meta.dirname, "../contract/managed/shielded-pools/keys");
+const CONTRACT_DIR = path.resolve(import.meta.dirname, "../contract/managed/shielded-pools");
 const PROOF_SERVER = "http://127.0.0.1:6300";
 const TX_TTL_MS = 30 * 60 * 1000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const V9 = DefaultForkSchedule.v9;
 
-// Add a public network here before its first deploy. Mainnet waits for an audit.
-const NETWORKS: Record<string, { node: string; indexerHttp: string; indexerWs: string }> = {
+export interface Network {
+  node: string;
+  indexerHttp: string;
+  indexerWs: string;
+  /** Blockfrost serves the network, so every URL needs BLOCKFROST_PROJECT_ID as `project_id`. */
+  blockfrost?: true;
+}
+
+// From docs.midnight.network/guides/networks-and-environments. Midnight retired its own mainnet
+// endpoints on 9 October 2026, so mainnet goes through Blockfrost, with a token for that network.
+// Preprod is left out: it stays on ledger 8 until a later upgrade, and this contract is built for
+// ledger 9 (docs.midnight.network/relnotes/ledger-9).
+export const NETWORKS: Record<string, Network> = {
   undeployed: {
     node: "http://127.0.0.1:9944",
     indexerHttp: "http://127.0.0.1:8088/api/v4/graphql",
     indexerWs: "ws://127.0.0.1:8088/api/v4/graphql/ws",
+  },
+  preview: {
+    node: "https://rpc.preview.midnight.network",
+    indexerHttp: "https://indexer.preview.midnight.network/api/v4/graphql",
+    indexerWs: "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
+  },
+  mainnet: {
+    node: "https://rpc.midnight-mainnet.blockfrost.io",
+    indexerHttp: "https://midnight-mainnet.blockfrost.io/api/v0",
+    indexerWs: "wss://midnight-mainnet.blockfrost.io/api/v0/ws",
+    blockfrost: true,
   },
 };
 
@@ -45,17 +70,39 @@ export function isImmutable({ committee, threshold }: Authority): boolean {
   return threshold > committee.length;
 }
 
-export async function immutableDeployment(coinPublicKey: string): Promise<ledger.ContractDeploy> {
+export async function immutableDeployment(
+  coinPublicKey: string,
+  contractDir = CONTRACT_DIR,
+): Promise<ledger.ContractDeploy> {
+  const { Contract } = await import(pathToFileURL(path.join(contractDir, "contract/index.js")).href);
   const context = createConstructorContext({}, coinPublicKey);
   const { currentContractState } = await new Contract({}).initialState(context);
   const state = ledger.ContractState.deserialize(currentContractState.serialize());
   for (const circuit of state.operations()) {
     const operation = state.operation(circuit)!;
-    operation.verifierKey = fs.readFileSync(path.join(KEYS_DIR, `${String(circuit)}.verifier`));
+    operation.verifierKey = fs.readFileSync(path.join(contractDir, "keys", `${String(circuit)}.verifier`));
     state.setOperation(circuit, operation);
   }
   state.maintenanceAuthority = new ledger.ContractMaintenanceAuthority([], 1, 0n);
   return new ledger.ContractDeploy(state);
+}
+
+/** Why the deployed contract isn't what was meant to be deployed, if it isn't. */
+export function deploymentProblems(deployed: ledger.ContractState, intended: ledger.ContractState): string[] {
+  const problems: string[] = [];
+  if (!isImmutable(deployed.maintenanceAuthority)) problems.push("it has a maintenance authority");
+  const names = (state: ledger.ContractState) => state.operations().map(String).toSorted();
+  if (names(deployed).join() !== names(intended).join()) {
+    problems.push(`its circuits are ${names(deployed).join(", ")}, not ${names(intended).join(", ")}`);
+  }
+  for (const circuit of intended.operations()) {
+    const onChain = deployed.operation(circuit)?.verifierKey;
+    const expected = intended.operation(circuit)!.verifierKey;
+    if (onChain === undefined || !Buffer.from(onChain).equals(Buffer.from(expected))) {
+      problems.push(`the verifier key of ${String(circuit)} differs from the build`);
+    }
+  }
+  return problems;
 }
 
 function requireEnv(name: string): string {
@@ -64,11 +111,73 @@ function requireEnv(name: string): string {
   return value;
 }
 
-async function openWallet(id: string, network: (typeof NETWORKS)[string], seedHex: string) {
+/**
+ * The wallet's master seed, from hex or from a BIP39 phrase. A phrase becomes its full 64-byte
+ * BIP39 seed with no passphrase, which gives the same wallet as 1AM. Errors never repeat the secret.
+ */
+export function masterSeed(secret: string): Uint8Array {
+  const value = secret.trim();
+  if (/^(?:[0-9a-f]{2}){16,64}$/i.test(value)) return Buffer.from(value, "hex");
+  const phrase = value.toLowerCase().split(/\s+/).join(" ");
+  if (!bip39.validateMnemonic(phrase, wordlist)) {
+    throw new Error("MIDNIGHT_SEED is neither a hex seed nor a valid BIP39 phrase");
+  }
+  return bip39.mnemonicToSeedSync(phrase);
+}
+
+// Blockfrost takes the token as a query parameter, which the wallet's WebSocket clients can send.
+export function endpoints(network: Network): Omit<Network, "blockfrost"> {
+  if (!network.blockfrost) return network;
+  const token = requireEnv("BLOCKFROST_PROJECT_ID");
+  const withToken = (url: string) => {
+    const parsed = new URL(url);
+    parsed.searchParams.set("project_id", token);
+    return parsed.toString();
+  };
+  return {
+    node: withToken(network.node),
+    indexerHttp: withToken(network.indexerHttp),
+    indexerWs: withToken(network.indexerWs),
+  };
+}
+
+async function indexer<T>(indexerHttp: string, query: string): Promise<T | undefined> {
+  const response = await fetch(indexerHttp, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  if (!response.ok) throw new Error(`The indexer answered ${response.status} ${response.statusText}`);
+  const { data } = (await response.json()) as { data?: T };
+  return data;
+}
+
+// This builds ledger 9 transactions, and the wallet needs the chain's own DUST parameters, which a
+// public network can change from the ledger's initial ones.
+async function chainParameters(indexerHttp: string): Promise<ledger.LedgerParameters> {
+  const data = await indexer<{ block: { protocolVersion: number; ledgerParameters: string } }>(
+    indexerHttp,
+    "{block{protocolVersion ledgerParameters}}",
+  );
+  if (!data?.block) throw new Error("The indexer has no block yet");
+  if (BigInt(data.block.protocolVersion) < V9) {
+    throw new Error(`The chain is at protocol version ${data.block.protocolVersion}, before ledger 9`);
+  }
+  return ledger.LedgerParameters.deserialize(Buffer.from(data.block.ledgerParameters, "hex"));
+}
+
+async function openWallet(
+  id: string,
+  network: Omit<Network, "blockfrost">,
+  secret: string,
+  parameters: ledger.LedgerParameters,
+) {
   // @ts-expect-error the wallet syncs over GraphQL subscriptions, which need a global WebSocket
   globalThis.WebSocket = WebSocket;
-  const seeds = WalletSeeds.fromMasterSeed(Buffer.from(seedHex, "hex"));
+  const seeds = WalletSeeds.fromMasterSeed(masterSeed(secret));
   const keystore = createKeystore({ kind: "schnorr", secret: seeds.unshielded }, id);
+  // Shows which wallet pays, so a seed that opens the wrong one is plain from the log.
+  console.error(`Paying from ${keystore.getBech32Address().asString()}`);
   const facade = await WalletFacade.init({
     configuration: {
       networkId: id,
@@ -85,8 +194,7 @@ async function openWallet(id: string, network: (typeof NETWORKS)[string], seedHe
     },
     shielded: (cfg) => ShieldedWallet(cfg).startWithSeed(seeds.shielded),
     unshielded: (cfg) => UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(keystore)),
-    dust: (cfg) =>
-      DustWallet(cfg).startWithSeed(seeds.dust, ledger.LedgerParameters.initialParameters().dust),
+    dust: (cfg) => DustWallet(cfg).startWithSeed(seeds.dust, parameters.dust),
   });
   await facade.start(seeds);
   return facade;
@@ -140,19 +248,15 @@ async function waitForFeeBudget(
 }
 
 // The contract appears here once its deployment has succeeded on-chain, so this is what confirms it.
-async function deployedAuthority(indexerHttp: string, address: string): Promise<Authority> {
-  const query = `{contractAction(address:"${address}"){state}}`;
+async function deployedState(indexerHttp: string, address: string): Promise<ledger.ContractState> {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const response = await fetch(indexerHttp, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const { data } = (await response.json()) as { data?: { contractAction?: { state: string } } };
+    const data = await indexer<{ contractAction?: { state: string } }>(
+      indexerHttp,
+      `{contractAction(address:"${address}"){state}}`,
+    );
     if (data?.contractAction) {
-      const state = ledger.ContractState.deserialize(Buffer.from(data.contractAction.state, "hex"));
-      return state.maintenanceAuthority;
+      return ledger.ContractState.deserialize(Buffer.from(data.contractAction.state, "hex"));
     }
     await delay(1_000);
   }
@@ -165,25 +269,31 @@ async function main() {
   if (network === undefined) {
     throw new Error(`Unknown MIDNIGHT_NETWORK "${id}". Use: ${Object.keys(NETWORKS).join(", ")}`);
   }
+  const urls = endpoints(network);
+  const contractDir = path.resolve(process.env.CONTRACT_DIR ?? CONTRACT_DIR);
+  const parameters = await chainParameters(urls.indexerHttp);
 
-  const facade = await openWallet(id, network, requireEnv("MIDNIGHT_SEED"));
+  const facade = await openWallet(id, urls, requireEnv("MIDNIGHT_SEED"), parameters);
   try {
     const { shielded } = await settledState(facade);
-    const deploy = await immutableDeployment(shielded.coinPublicKey.toHexString());
+    const deploy = await immutableDeployment(shielded.coinPublicKey.toHexString(), contractDir);
     const ttl = new Date(Date.now() + TX_TTL_MS);
     const intent = ledger.Intent.new(ttl).addDeploy(deploy);
     const tx = ledger.Transaction.fromParts(id, undefined, undefined, intent);
     const handle = WalletTransaction.adopt("Unproven", tx, V9);
     await waitForFeeBudget(facade, handle, ttl);
     const recipe = await facade.balanceUnprovenTransaction(handle, { ttl });
-    await facade.submitTransaction(await facade.finalizeRecipe(recipe));
+    const txId = await facade.submitTransaction(await facade.finalizeRecipe(recipe));
 
-    const authority = await deployedAuthority(network.indexerHttp, deploy.address);
-    if (!isImmutable(authority)) {
-      throw new Error(`${deploy.address} deployed with a maintenance authority, so don't use it`);
+    const problems = deploymentProblems(await deployedState(urls.indexerHttp, deploy.address), deploy.initialState);
+    if (problems.length > 0) {
+      throw new Error(`Don't use ${deploy.address}: ${problems.join("; ")}`);
     }
-    console.log(`contract: ${deploy.address}`);
-    console.log("control:  nobody, its circuits can't be changed");
+    console.log(`network:     ${id}`);
+    console.log(`contract:    ${deploy.address}`);
+    console.log(`transaction: ${txId}`);
+    console.log("control:     nobody, its circuits can't be changed");
+    console.log(`circuits:    ${deploy.initialState.operations().map(String).toSorted().join(", ")}, keys as built`);
     // The next process syncs from the indexer, so don't leave before this wallet's spends show there.
     await settledState(facade);
   } finally {

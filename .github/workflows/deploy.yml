@@ -1,10 +1,20 @@
 name: Deploy
 
-# Run by hand. First:
-#   1. Add the network to scripts/deploy.ts.
-#   2. Create a GitHub environment named after the network, with required reviewers.
-#   3. In it, set the MIDNIGHT_SEED secret.
-# Mainnet isn't an option: add it after an audit, once the Midnight packages are stable.
+# Run by hand from main, so the deploy tooling is what's on main. It deploys a published release:
+# built from its tag, and only if that matches the package on npm byte for byte.
+#
+# For each network, create a GitHub environment named after it, with:
+#   - deployment branches limited to main
+#   - the MIDNIGHT_SEED secret: a hex seed or a BIP39 phrase, such as one from 1AM, of a wallet
+#     used only to pay deploy fees. Keep little more than one deploy needs in it. It has no power
+#     over the contract, which has no maintenance authority. The log shows which wallet paid.
+#   - for mainnet, the BLOCKFROST_PROJECT_ID secret: a Blockfrost mainnet token, since Midnight
+#     retired its own mainnet endpoints
+#
+# Rehearse on preview, which runs the same ledger 9 versions as mainnet. Preprod isn't offered: it
+# stays on ledger 8 until a later upgrade, and this contract is built for ledger 9.
+#
+# A deploy can't be undone or changed, and running it twice makes a second contract.
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +24,15 @@ on:
         required: true
         options:
           - preview
-          - preprod
+          - mainnet
+      version:
+        description: Published release to deploy, such as 0.3.0
+        type: string
+        required: true
+      confirm:
+        description: Type the network name again to confirm
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -25,8 +43,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     environment: ${{ inputs.network }}
     steps:
+      - name: Check the request
+        env:
+          NETWORK: ${{ inputs.network }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "Run this from main"; exit 1; }
+          [[ "$CONFIRM" == "$NETWORK" ]] || { echo "The confirmation doesn't match $NETWORK"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -34,3 +60,5 @@ jobs:
         with:
           network: ${{ inputs.network }}
           seed: ${{ secrets.MIDNIGHT_SEED }}
+          blockfrost-project-id: ${{ secrets.BLOCKFROST_PROJECT_ID }}
+          version: ${{ inputs.version }}
