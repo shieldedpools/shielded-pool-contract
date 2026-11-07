@@ -5,16 +5,25 @@ import CompactStandardLibrary;
 // 1:1 wrapper for native unshielded tokens.
 // Each wrapped-token colour is derived from its underlying token and this contract.
 
-export circuit shield(token: Bytes<32>, amount: Uint<64>, nonce: Bytes<32>): ShieldedCoinInfo {
+export circuit shield(
+  token: Bytes<32>,
+  amount: Uint<64>,
+  nonce: Bytes<32>,
+  recipient: ZswapCoinPublicKey
+): ShieldedCoinInfo {
   const underlying = disclose(token);
   const value = disclose(amount);
+  // disclose() only acknowledges that the recipient goes into the coin's commitment, which
+  // reaches the ledger. It stays hidden as long as `nonce` is fresh and secret.
+  const to = disclose(recipient);
+  assert(to != default<ZswapCoinPublicKey>, "shielded-pools: zero recipient");
 
   receiveUnshielded(underlying, value);
   return mintShieldedToken(
     underlying,
     value,
     disclose(nonce),
-    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+    left<ZswapCoinPublicKey, ContractAddress>(to)
   );
 }
 

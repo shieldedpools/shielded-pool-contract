@@ -14,19 +14,30 @@ A 1:1 shielded wrapper for Midnight's native unshielded tokens. Lock a token, re
 
 ### `shield`
 
-Locks `amount` of `token` in the contract and mints the same amount of its wrapped token to the caller's coin key. The depositor, token and amount are public. The new coin's key stays private, which needs a fresh secret `nonce` for each call.
+Locks `amount` of `token` in the contract and mints the same amount of its wrapped token to `recipient`, a coin key. That's usually the caller's own key, but it can be anyone's: the caller pays either way. The depositor, token and amount are public. The recipient stays private, because only the new coin's commitment reaches the ledger, which needs a fresh secret `nonce` for each call.
+
+The recipient's wallet finds the coin only if the transaction encrypts it to that wallet's encryption key, which the contract can't check. So take a recipient as a full shielded address, which carries both keys, not as a bare coin key.
 
 ```compact
-export circuit shield(token: Bytes<32>, amount: Uint<64>, nonce: Bytes<32>): ShieldedCoinInfo {
+export circuit shield(
+  token: Bytes<32>,
+  amount: Uint<64>,
+  nonce: Bytes<32>,
+  recipient: ZswapCoinPublicKey
+): ShieldedCoinInfo {
   const underlying = disclose(token);
   const value = disclose(amount);
+  // disclose() only acknowledges that the recipient goes into the coin's commitment, which
+  // reaches the ledger. It stays hidden as long as `nonce` is fresh and secret.
+  const to = disclose(recipient);
+  assert(to != default<ZswapCoinPublicKey>, "shielded-pools: zero recipient");
 
   receiveUnshielded(underlying, value);
   return mintShieldedToken(
     underlying,
     value,
     disclose(nonce),
-    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+    left<ZswapCoinPublicKey, ContractAddress>(to)
   );
 }
 ```

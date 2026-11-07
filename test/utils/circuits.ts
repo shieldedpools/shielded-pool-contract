@@ -13,7 +13,9 @@ export const NIGHT = bytes(0);
 export const OTHER_TOKEN = bytes(1);
 export const NONCE = bytes(9);
 export const WALLET = { bytes: bytes(7) };
+// An unshielded address for `unshield`, and a coin key for `shield`.
 export const RECIPIENT = { bytes: bytes(3) };
+export const SHIELDED_RECIPIENT = { bytes: bytes(4) };
 export const ZERO_KEY = { bytes: bytes(0) };
 
 export const contract = new Contract({});
