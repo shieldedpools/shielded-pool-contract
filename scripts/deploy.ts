@@ -28,7 +28,11 @@ const CONTRACT_DIR = path.resolve(import.meta.dirname, "../contract/managed/shie
 const PROOF_SERVER = "http://127.0.0.1:6300";
 const TX_TTL_MS = 30 * 60 * 1000;
 const TIMEOUT_MS = 10 * 60 * 1000;
+// A new wallet replays the chain from genesis. On mainnet that's over 1.6 million shielded and DUST
+// events each. A 3-minute sample in November 2026 put a full sync at 75 to 100 minutes.
+const SYNC_TIMEOUT_MS = Number(process.env.MIDNIGHT_SYNC_MINUTES ?? 150) * 60 * 1000;
 const V9 = DefaultForkSchedule.v9;
+const DEFLATE_PROTOCOL = "graphql-transport-ws+deflate";
 
 export interface Network {
   node: string;
@@ -166,6 +170,21 @@ async function chainParameters(indexerHttp: string): Promise<ledger.LedgerParame
   return ledger.LedgerParameters.deserialize(Buffer.from(data.block.ledgerParameters, "hex"));
 }
 
+/**
+ * The subprotocols to offer, without the indexer's deflate variant. The wallet SDK always offers it, and
+ * Blockfrost accepts it, then closes the subscription (1011) as soon as it starts. The standard
+ * protocol works everywhere; the SDK's wrapper passes its text frames straight through.
+ */
+export function withoutDeflate(protocols?: string | string[]): string | string[] | undefined {
+  return Array.isArray(protocols) ? protocols.filter((protocol) => protocol !== DEFLATE_PROTOCOL) : protocols;
+}
+
+class StandardWebSocket extends WebSocket {
+  constructor(address: string | URL, protocols?: string | string[], options?: WebSocket.ClientOptions) {
+    super(address, withoutDeflate(protocols), options);
+  }
+}
+
 async function openWallet(
   id: string,
   network: Omit<Network, "blockfrost">,
@@ -173,11 +192,9 @@ async function openWallet(
   parameters: ledger.LedgerParameters,
 ) {
   // @ts-expect-error the wallet syncs over GraphQL subscriptions, which need a global WebSocket
-  globalThis.WebSocket = WebSocket;
+  globalThis.WebSocket = StandardWebSocket;
   const seeds = WalletSeeds.fromMasterSeed(masterSeed(secret));
   const keystore = createKeystore({ kind: "schnorr", secret: seeds.unshielded }, id);
-  // Shows which wallet pays, so a seed that opens the wrong one is plain from the log.
-  console.error(`Paying from ${keystore.getBech32Address().asString()}`);
   const facade = await WalletFacade.init({
     configuration: {
       networkId: id,
@@ -212,6 +229,41 @@ function firstState(facade: WalletFacade, ready: (state: WalletState) => boolean
       }),
     ),
   );
+}
+
+type Progress = { appliedIndex?: bigint; highestRelevantWalletIndex?: bigint } | undefined;
+
+const percent = (progress: Progress) => {
+  const done = Number(progress?.appliedIndex ?? 0n);
+  const total = Number(progress?.highestRelevantWalletIndex ?? 0n);
+  return total === 0 ? "starting" : `${Math.floor((100 * done) / total)}% (${done.toLocaleString("en")} of ${total.toLocaleString("en")})`;
+};
+
+// Syncing from genesis is slow on a long chain, so this reports progress every minute.
+async function syncedState(facade: WalletFacade): Promise<WalletState> {
+  const started = Date.now();
+  let latest: WalletState | undefined;
+  const ticker = setInterval(() => {
+    if (latest === undefined) return;
+    const minutes = Math.round((Date.now() - started) / 60_000);
+    const shielded = (latest.shielded as { progress?: Progress }).progress;
+    const dust = (latest.dust as { progress?: Progress }).progress;
+    console.error(`Syncing the wallet, ${minutes} min: shielded ${percent(shielded)}, DUST ${percent(dust)}`);
+  }, 60_000);
+  try {
+    return await Rx.firstValueFrom(
+      facade.state().pipe(
+        Rx.tap((state) => (latest = state)),
+        Rx.filter((state) => state.isSynced),
+        Rx.timeout({
+          first: SYNC_TIMEOUT_MS,
+          with: () => Rx.throwError(() => new Error(`The wallet hadn't synced after ${SYNC_TIMEOUT_MS / 60_000} minutes`)),
+        }),
+      ),
+    );
+  } finally {
+    clearInterval(ticker);
+  }
 }
 
 // Until its own spends come back from the chain, the wallet's view of its coins is out of date.
@@ -275,6 +327,9 @@ async function main() {
 
   const facade = await openWallet(id, urls, requireEnv("MIDNIGHT_SEED"), parameters);
   try {
+    console.error("Syncing the wallet from genesis");
+    await syncedState(facade);
+    console.error("Synced");
     const { shielded } = await settledState(facade);
     const deploy = await immutableDeployment(shielded.coinPublicKey.toHexString(), contractDir);
     const ttl = new Date(Date.now() + TX_TTL_MS);

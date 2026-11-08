@@ -12,6 +12,7 @@ import {
   isImmutable,
   masterSeed,
   NETWORKS,
+  withoutDeflate,
 } from "../scripts/deploy.ts";
 
 const keys = path.resolve(import.meta.dirname, "../contract/managed/shielded-pools/keys");
@@ -150,5 +151,16 @@ describe("masterSeed", () => {
       (error: Error) => /neither a hex seed nor a valid BIP39 phrase/.test(error.message) && !error.message.includes("abandon"),
     );
     assert.throws(() => masterSeed("not a seed"), /neither a hex seed/);
+  });
+});
+
+describe("withoutDeflate", () => {
+  it("offers the indexer only the standard protocol, which Blockfrost doesn't break", () => {
+    assert.deepEqual(withoutDeflate(["graphql-transport-ws+deflate", "graphql-transport-ws"]), ["graphql-transport-ws"]);
+  });
+
+  it("leaves other WebSockets alone", () => {
+    assert.equal(withoutDeflate(undefined), undefined);
+    assert.equal(withoutDeflate("graphql-transport-ws"), "graphql-transport-ws");
   });
 });

@@ -7,7 +7,7 @@ name: Deploy
 #   - deployment branches limited to main
 #   - the MIDNIGHT_SEED secret: a hex seed or a BIP39 phrase, such as one from 1AM, of a wallet
 #     used only to pay deploy fees. Keep little more than one deploy needs in it. It has no power
-#     over the contract, which has no maintenance authority. The log shows which wallet paid.
+#     over the contract, which has no maintenance authority.
 #   - for mainnet, the BLOCKFROST_PROJECT_ID secret: a Blockfrost mainnet token, since Midnight
 #     retired its own mainnet endpoints
 #
@@ -43,7 +43,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Syncing a new wallet on mainnet is expected to take 75 to 100 minutes (sampled November 2026).
+    timeout-minutes: 240
     environment: ${{ inputs.network }}
     steps:
       - name: Check the request

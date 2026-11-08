@@ -80,6 +80,7 @@ This pays the fee from the wallet with that seed, using a proof server on `127.0
 - `MIDNIGHT_NETWORK` picks the network: `undeployed` (the local one, and the default), `preview` or `mainnet`. Preprod isn't supported while it stays on ledger 8, because this contract is built for ledger 9.
 - Mainnet is served through Blockfrost, so it needs `BLOCKFROST_PROJECT_ID` set to a mainnet token.
 - `CONTRACT_DIR` deploys another compiled contract instead of `contract/managed/shielded-pools`.
+- `MIDNIGHT_SYNC_MINUTES` sets how long the wallet may take to sync from genesis, 150 by default. On mainnet that sync is expected to take 75 to 100 minutes.
 
 Public networks use the [deploy workflow](.github/workflows/deploy.yml). Run it from `main` with a published version. It builds that version from its tag, and refuses to deploy unless the build matches the npm package byte for byte.
 
