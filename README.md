@@ -77,8 +77,8 @@ npm run -s deploy
 This pays the fee from the wallet with that seed, using a proof server on `127.0.0.1:6300`. It fails unless the chain shows that nobody can change the contract and that its verifier keys are the ones built. No maintenance key is ever created.
 
 - `MIDNIGHT_SEED` is the paying wallet's hex seed or BIP39 phrase. A phrase gives the same wallet as 1AM.
-- `MIDNIGHT_NETWORK` picks the network: `undeployed` (the local one, and the default), `preview` or `mainnet`. Preprod isn't supported while it stays on ledger 8, because this contract is built for ledger 9.
-- Mainnet is served through Blockfrost, so it needs `BLOCKFROST_PROJECT_ID` set to a mainnet token.
+- `MIDNIGHT_NETWORK` picks the network: `undeployed` (the local one, and the default), `preview`, `preprod` or `mainnet`.
+- Preprod and mainnet are served through Blockfrost, so they need `BLOCKFROST_PROJECT_ID` set to a token for that network.
 - `CONTRACT_DIR` deploys another compiled contract instead of `contract/managed/shielded-pools`.
 - `MIDNIGHT_SYNC_MINUTES` sets how long the wallet may take to sync from genesis, 150 by default. On mainnet that sync is expected to take 75 to 100 minutes.
 

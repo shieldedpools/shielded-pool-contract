@@ -42,10 +42,9 @@ export interface Network {
   blockfrost?: true;
 }
 
-// From docs.midnight.network/guides/networks-and-environments. Midnight retired its own mainnet
-// endpoints on 9 October 2026, so mainnet goes through Blockfrost, with a token for that network.
-// Preprod is left out: it stays on ledger 8 until a later upgrade, and this contract is built for
-// ledger 9 (docs.midnight.network/relnotes/ledger-9).
+// From docs.midnight.network/guides/networks-and-environments. Midnight retired its own preprod and
+// mainnet endpoints on 9 October 2026, so both go through Blockfrost, with a token for each network.
+// Preprod moved to ledger 9 on 9 November 2026 (docs.midnight.network/relnotes/ledger-9).
 export const NETWORKS: Record<string, Network> = {
   undeployed: {
     node: "http://127.0.0.1:9944",
@@ -56,6 +55,12 @@ export const NETWORKS: Record<string, Network> = {
     node: "https://rpc.preview.midnight.network",
     indexerHttp: "https://indexer.preview.midnight.network/api/v4/graphql",
     indexerWs: "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
+  },
+  preprod: {
+    node: "https://rpc.midnight-preprod.blockfrost.io",
+    indexerHttp: "https://midnight-preprod.blockfrost.io/api/v0",
+    indexerWs: "wss://midnight-preprod.blockfrost.io/api/v0/ws",
+    blockfrost: true,
   },
   mainnet: {
     node: "https://rpc.midnight-mainnet.blockfrost.io",

@@ -8,11 +8,10 @@ name: Deploy
 #   - the MIDNIGHT_SEED secret: a hex seed or a BIP39 phrase, such as one from 1AM, of a wallet
 #     used only to pay deploy fees. Keep little more than one deploy needs in it. It has no power
 #     over the contract, which has no maintenance authority.
-#   - for mainnet, the BLOCKFROST_PROJECT_ID secret: a Blockfrost mainnet token, since Midnight
-#     retired its own mainnet endpoints
+#   - for preprod and mainnet, the BLOCKFROST_PROJECT_ID secret: a Blockfrost token for that
+#     network, since Midnight retired its own endpoints for both
 #
-# Rehearse on preview, which runs the same ledger 9 versions as mainnet. Preprod isn't offered: it
-# stays on ledger 8 until a later upgrade, and this contract is built for ledger 9.
+# Preview and preprod run the same ledger 9 versions as mainnet, so either can rehearse a deploy.
 #
 # A deploy can't be undone or changed, and running it twice makes a second contract.
 on:
@@ -24,6 +23,7 @@ on:
         required: true
         options:
           - preview
+          - preprod
           - mainnet
       version:
         description: Published release to deploy, such as 0.3.0

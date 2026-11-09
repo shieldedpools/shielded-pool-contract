@@ -9,7 +9,7 @@ inputs:
     description: Seed of the wallet that pays the fee
     required: true
   blockfrost-project-id:
-    description: Blockfrost token for the network, which mainnet needs
+    description: Blockfrost token for the network, which preprod and mainnet need
     required: false
     default: ""
   version:

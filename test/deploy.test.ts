@@ -105,18 +105,20 @@ describe("endpoints", () => {
     });
   };
 
-  it("adds the Blockfrost token to every URL of a network Blockfrost serves", (t) => {
-    token(t, "mainnettoken");
-    const urls = endpoints(NETWORKS.mainnet!);
-    for (const url of [urls.node, urls.indexerHttp, urls.indexerWs]) {
-      assert.equal(new URL(url).searchParams.get("project_id"), "mainnettoken");
-    }
-  });
+  for (const id of ["preprod", "mainnet"]) {
+    it(`adds the Blockfrost token to every URL of ${id}`, (t) => {
+      token(t, `${id}token`);
+      const urls = endpoints(NETWORKS[id]!);
+      for (const url of [urls.node, urls.indexerHttp, urls.indexerWs]) {
+        assert.equal(new URL(url).searchParams.get("project_id"), `${id}token`);
+      }
+    });
 
-  it("refuses a Blockfrost network without a token", (t) => {
-    token(t, undefined);
-    assert.throws(() => endpoints(NETWORKS.mainnet!), /BLOCKFROST_PROJECT_ID is not set/);
-  });
+    it(`refuses ${id} without a token`, (t) => {
+      token(t, undefined);
+      assert.throws(() => endpoints(NETWORKS[id]!), /BLOCKFROST_PROJECT_ID is not set/);
+    });
+  }
 
   it("leaves Midnight's own endpoints alone", () => {
     assert.deepEqual(endpoints(NETWORKS.preview!), NETWORKS.preview);
