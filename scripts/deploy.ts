@@ -28,9 +28,11 @@ const CONTRACT_DIR = path.resolve(import.meta.dirname, "../contract/managed/shie
 const PROOF_SERVER = "http://127.0.0.1:6300";
 const TX_TTL_MS = 30 * 60 * 1000;
 const TIMEOUT_MS = 10 * 60 * 1000;
-// A new wallet replays the chain from genesis. On mainnet that's over 1.6 million shielded and DUST
-// events each. A 3-minute sample in November 2026 put a full sync at 75 to 100 minutes.
-const SYNC_TIMEOUT_MS = Number(process.env.MIDNIGHT_SYNC_MINUTES ?? 150) * 60 * 1000;
+// A new wallet replays the chain from genesis: over 1.6 million shielded and DUST events each on
+// mainnet, and 1.86 million on preprod, in November 2026. Mainnet took 57 minutes. Preprod's DUST
+// events came at half mainnet's rate or less, with frequent dropped connections, and had reached only
+// 65% after 150 minutes.
+const SYNC_TIMEOUT_MS = Number(process.env.MIDNIGHT_SYNC_MINUTES ?? 300) * 60 * 1000;
 const V9 = DefaultForkSchedule.v9;
 const DEFLATE_PROTOCOL = "graphql-transport-ws+deflate";
 

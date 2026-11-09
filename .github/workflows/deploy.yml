@@ -43,8 +43,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    # Syncing a new wallet on mainnet is expected to take 75 to 100 minutes (sampled November 2026).
-    timeout-minutes: 240
+    # A new wallet syncs from genesis, which the script allows 5 hours for. In November 2026 that
+    # took 57 minutes on mainnet and was on course for about 4 hours on preprod. This leaves time for
+    # setup and the deploy itself, within the 6 hours GitHub allows a job.
+    timeout-minutes: 345
     environment: ${{ inputs.network }}
     steps:
       - name: Check the request
