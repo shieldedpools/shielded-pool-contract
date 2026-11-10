@@ -1,0 +1,79 @@
+name: Sync the deploy wallet
+description: >
+  Syncs the deploy wallet for up to a set time, resuming from the wallet-state artifact if there is
+  one, and saves its progress there for the next job.
+
+inputs:
+  network:
+    description: Network the wallet is on
+    required: true
+  seed:
+    description: Seed of the wallet that pays the fee
+    required: true
+  blockfrost-project-id:
+    description: Blockfrost token for the network, which preprod and mainnet need
+    required: false
+    default: ""
+  minutes:
+    description: How long to sync before saving and handing over
+    required: true
+  resume:
+    description: Whether an earlier job saved the wallet's progress
+    required: false
+    default: "false"
+  last:
+    description: Whether this is the last job that can sync, so the wallet has to finish here
+    required: false
+    default: "false"
+
+outputs:
+  synced:
+    description: Whether the wallet finished syncing
+    value: ${{ steps.sync.outputs.synced }}
+
+runs:
+  using: composite
+  steps:
+    # Syncing needs only the deploy script, not the Compact compiler.
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+    - name: Install the deploy tooling
+      shell: bash
+      run: npm ci
+    - name: Get the saved sync
+      if: inputs.resume == 'true'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: wallet-state
+        path: ${{ runner.temp }}/wallet-state
+    - name: Sync
+      id: sync
+      shell: bash
+      env:
+        MIDNIGHT_NETWORK: ${{ inputs.network }}
+        MIDNIGHT_SEED: ${{ inputs.seed }}
+        BLOCKFROST_PROJECT_ID: ${{ inputs.blockfrost-project-id }}
+        MIDNIGHT_WALLET_STATE: ${{ runner.temp }}/wallet-state/wallet.state
+        MIDNIGHT_SYNC_MINUTES: ${{ inputs.minutes }}
+        LAST: ${{ inputs.last }}
+      run: |
+        mkdir -p "$(dirname "$MIDNIGHT_WALLET_STATE")"
+        code=0
+        npm run -s deploy -- --sync-only || code=$?
+        case "$code" in
+          0) echo "synced=true" >> "$GITHUB_OUTPUT" ;;
+          75)
+            [[ "$LAST" != true ]] || { echo "The wallet ran out of time to sync"; exit 1; }
+            echo "synced=false" >> "$GITHUB_OUTPUT" ;;
+          *) exit "$code" ;;
+        esac
+    # The state lists the wallet's coins but no keys, and the script encrypts it to the seed.
+    - name: Save the sync for the next job
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: wallet-state
+        path: ${{ runner.temp }}/wallet-state/wallet.state
+        overwrite: true
+        retention-days: 1
+        if-no-files-found: error

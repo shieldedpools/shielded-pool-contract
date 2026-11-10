@@ -13,6 +13,10 @@ name: Deploy
 #
 # Preview and preprod run the same ledger 9 versions as mainnet, so either can rehearse a deploy.
 #
+# A new wallet syncs from genesis, which took 57 minutes on mainnet in November 2026 and was on course
+# for about 4 hours on preprod. GitHub stops a job after 6 hours, so the sync can carry over two jobs,
+# which hand the wallet's progress on as an artifact. The whole run is given 12 hours.
+#
 # A deploy can't be undone or changed, and running it twice makes a second contract.
 on:
   workflow_dispatch:
@@ -41,27 +45,88 @@ concurrency:
   group: deploy-${{ inputs.network }}
 
 jobs:
-  deploy:
+  check:
     runs-on: ubuntu-24.04
-    # A new wallet syncs from genesis, which the script allows 5 hours for. In November 2026 that
-    # took 57 minutes on mainnet and was on course for about 4 hours on preprod. This leaves time for
-    # setup and the deploy itself, within the 6 hours GitHub allows a job.
-    timeout-minutes: 345
-    environment: ${{ inputs.network }}
+    timeout-minutes: 10
     steps:
       - name: Check the request
         env:
           NETWORK: ${{ inputs.network }}
           CONFIRM: ${{ inputs.confirm }}
+          VERSION: ${{ inputs.version }}
         run: |
           [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "Run this from main"; exit 1; }
           [[ "$CONFIRM" == "$NETWORK" ]] || { echo "The confirmation doesn't match $NETWORK"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a version: $VERSION"; exit 1; }
+          # Fail now rather than after the sync. The deploy job still checks the release in full.
+          npm view "@shieldedpools/contracts@$VERSION" version | grep -qx "$VERSION" || {
+            echo "@shieldedpools/contracts $VERSION isn't on npm"; exit 1; }
+
+  # Each sync job stops syncing 20 minutes before its timeout, to save its progress and hand over.
+  sync-1:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 310
+    environment: ${{ inputs.network }}
+    outputs:
+      synced: ${{ steps.sync.outputs.synced }}
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - id: sync
+        uses: ./.github/actions/sync
+        with:
+          network: ${{ inputs.network }}
+          seed: ${{ secrets.MIDNIGHT_SEED }}
+          blockfrost-project-id: ${{ secrets.BLOCKFROST_PROJECT_ID }}
+          minutes: 290
+
+  sync-2:
+    needs: sync-1
+    if: needs.sync-1.outputs.synced == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 310
+    environment: ${{ inputs.network }}
+    outputs:
+      synced: ${{ steps.sync.outputs.synced }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: sync
+        uses: ./.github/actions/sync
+        with:
+          network: ${{ inputs.network }}
+          seed: ${{ secrets.MIDNIGHT_SEED }}
+          blockfrost-project-id: ${{ secrets.BLOCKFROST_PROJECT_ID }}
+          minutes: 290
+          resume: true
+          last: true
+
+  # Resumes the synced wallet, which only has to catch up on the last few minutes, and leaves time to
+  # build and check the release, and for the deploy itself.
+  deploy:
+    needs: [sync-1, sync-2]
+    if: >-
+      !cancelled() &&
+      (needs.sync-1.outputs.synced == 'true' || needs.sync-2.outputs.synced == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: ${{ inputs.network }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wallet-state
+          path: ${{ runner.temp }}/wallet-state
       - uses: ./.github/actions/deploy
         with:
           network: ${{ inputs.network }}
           seed: ${{ secrets.MIDNIGHT_SEED }}
           blockfrost-project-id: ${{ secrets.BLOCKFROST_PROJECT_ID }}
           version: ${{ inputs.version }}
+          wallet-state: ${{ runner.temp }}/wallet-state/wallet.state
+          sync-minutes: 30

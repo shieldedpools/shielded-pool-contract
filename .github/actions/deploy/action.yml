@@ -18,6 +18,16 @@ inputs:
       the package on npm byte for byte. Leave it empty to deploy the checked-out source.
     required: false
     default: ""
+  wallet-state:
+    description: >
+      A file of the wallet's saved sync, from the sync action, to resume from. Leave it empty to
+      sync from genesis.
+    required: false
+    default: ""
+  sync-minutes:
+    description: How long the wallet may take to sync, or empty for the script's default
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -78,6 +88,8 @@ runs:
         MIDNIGHT_NETWORK: ${{ inputs.network }}
         MIDNIGHT_SEED: ${{ inputs.seed }}
         BLOCKFROST_PROJECT_ID: ${{ inputs.blockfrost-project-id }}
+        MIDNIGHT_WALLET_STATE: ${{ inputs.wallet-state }}
+        MIDNIGHT_SYNC_MINUTES: ${{ inputs.sync-minutes }}
       run: |
         npm run -s deploy > deployment.txt
         { echo '```'; cat deployment.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

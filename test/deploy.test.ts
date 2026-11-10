@@ -12,6 +12,8 @@ import {
   isImmutable,
   masterSeed,
   NETWORKS,
+  openWalletState,
+  sealWallet,
   withoutDeflate,
 } from "../scripts/deploy.ts";
 
@@ -164,5 +166,31 @@ describe("withoutDeflate", () => {
   it("leaves other WebSockets alone", () => {
     assert.equal(withoutDeflate(undefined), undefined);
     assert.equal(withoutDeflate("graphql-transport-ws"), "graphql-transport-ws");
+  });
+});
+
+describe("saved wallet state", () => {
+  const seed = Buffer.from("00".repeat(31) + "01", "hex");
+  const saved = { network: "preprod", shielded: "s", unshielded: "u", dust: "d" };
+
+  it("comes back as it was saved", () => {
+    assert.deepEqual(openWalletState(sealWallet(saved, seed), seed, "preprod"), saved);
+  });
+
+  it("doesn't show the wallet's coins", () => {
+    const sealed = sealWallet({ ...saved, dust: "a coin worth 12345" }, seed);
+    assert.ok(!sealed.includes("12345"));
+  });
+
+  it("refuses state from another wallet, or that has been changed", () => {
+    const sealed = sealWallet(saved, seed);
+    const other = Buffer.from("00".repeat(31) + "02", "hex");
+    assert.throws(() => openWalletState(sealed, other, "preprod"), /isn't from this wallet/);
+    sealed[20] ^= 1;
+    assert.throws(() => openWalletState(sealed, seed, "preprod"), /isn't from this wallet/);
+  });
+
+  it("refuses state from another network", () => {
+    assert.throws(() => openWalletState(sealWallet(saved, seed), seed, "mainnet"), /is for preprod, not mainnet/);
   });
 });

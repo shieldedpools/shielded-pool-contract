@@ -1,7 +1,12 @@
 // Deploys the contract with no maintenance authority, so nobody can ever change it.
 // Build first, because this deploys the compiled contract in contract/managed, or the one that
 // CONTRACT_DIR names.
+//
+// With MIDNIGHT_WALLET_STATE naming a file, a sync that runs out of time saves its progress there
+// and exits with code 75, and the next run resumes from it. `--sync-only` stops once the wallet has
+// synced, and saves it for the run that deploys.
 import { Buffer } from "node:buffer";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -32,7 +37,9 @@ const TIMEOUT_MS = 10 * 60 * 1000;
 // mainnet, and 1.86 million on preprod, in November 2026. Mainnet took 57 minutes. Preprod's DUST
 // events came at half mainnet's rate or less, with frequent dropped connections, and had reached only
 // 65% after 150 minutes.
-const SYNC_TIMEOUT_MS = Number(process.env.MIDNIGHT_SYNC_MINUTES ?? 300) * 60 * 1000;
+const SYNC_TIMEOUT_MS = Number(process.env.MIDNIGHT_SYNC_MINUTES || 300) * 60 * 1000;
+// The exit code when the sync ran out of time, and its progress was saved to resume from.
+const SYNC_UNFINISHED = 75;
 const V9 = DefaultForkSchedule.v9;
 const DEFLATE_PROTOCOL = "graphql-transport-ws+deflate";
 
@@ -186,6 +193,38 @@ export function withoutDeflate(protocols?: string | string[]): string | string[]
   return Array.isArray(protocols) ? protocols.filter((protocol) => protocol !== DEFLATE_PROTOCOL) : protocols;
 }
 
+/** What the wallet has synced so far, which a later run can resume from. */
+export interface SavedWallet {
+  network: string;
+  shielded: string;
+  unshielded: string;
+  dust: string;
+}
+
+// The saved state holds no keys, but it does list the wallet's coins, so it's encrypted to the seed.
+const stateKey = (seed: Uint8Array) =>
+  Buffer.from(crypto.hkdfSync("sha256", seed, Buffer.alloc(0), "shielded-pool deploy wallet state", 32));
+
+export function sealWallet(saved: SavedWallet, seed: Uint8Array): Buffer {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", stateKey(seed), iv);
+  const body = Buffer.concat([cipher.update(JSON.stringify(saved), "utf8"), cipher.final()]);
+  return Buffer.concat([iv, body, cipher.getAuthTag()]);
+}
+
+export function openWalletState(sealed: Buffer, seed: Uint8Array, network: string): SavedWallet {
+  const decipher = crypto.createDecipheriv("aes-256-gcm", stateKey(seed), sealed.subarray(0, 12));
+  decipher.setAuthTag(sealed.subarray(-16));
+  let saved: SavedWallet;
+  try {
+    saved = JSON.parse(Buffer.concat([decipher.update(sealed.subarray(12, -16)), decipher.final()]).toString("utf8"));
+  } catch {
+    throw new Error("The saved wallet state isn't from this wallet, or has been changed");
+  }
+  if (saved.network !== network) throw new Error(`The saved wallet state is for ${saved.network}, not ${network}`);
+  return saved;
+}
+
 class StandardWebSocket extends WebSocket {
   constructor(address: string | URL, protocols?: string | string[], options?: WebSocket.ClientOptions) {
     super(address, withoutDeflate(protocols), options);
@@ -195,12 +234,13 @@ class StandardWebSocket extends WebSocket {
 async function openWallet(
   id: string,
   network: Omit<Network, "blockfrost">,
-  secret: string,
+  seed: Uint8Array,
   parameters: ledger.LedgerParameters,
+  saved?: SavedWallet,
 ) {
   // @ts-expect-error the wallet syncs over GraphQL subscriptions, which need a global WebSocket
   globalThis.WebSocket = StandardWebSocket;
-  const seeds = WalletSeeds.fromMasterSeed(masterSeed(secret));
+  const seeds = WalletSeeds.fromMasterSeed(seed);
   const keystore = createKeystore({ kind: "schnorr", secret: seeds.unshielded }, id);
   const facade = await WalletFacade.init({
     configuration: {
@@ -216,9 +256,24 @@ async function openWallet(
       costParameters: { feeBlocksMargin: id === "undeployed" ? 100 : 5 },
       txHistoryStorage: new NoOpTransactionHistoryStorage(),
     },
-    shielded: (cfg) => ShieldedWallet(cfg).startWithSeed(seeds.shielded),
-    unshielded: (cfg) => UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(keystore)),
-    dust: (cfg) => DustWallet(cfg).startWithSeed(seeds.dust, parameters.dust),
+    // A saved state holds no keys, and may come from before ledger 9, so a restored wallet starts
+    // from the seed, which answers for both ledger versions.
+    shielded: async (cfg) => {
+      if (saved === undefined) return ShieldedWallet(cfg).startWithSeed(seeds.shielded);
+      const wallet = ShieldedWallet(cfg).restore(saved.shielded);
+      await wallet.startWithSeed(seeds.shielded);
+      return wallet;
+    },
+    unshielded: (cfg) =>
+      saved === undefined
+        ? UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(keystore))
+        : UnshieldedWallet(cfg).restore(saved.unshielded),
+    dust: async (cfg) => {
+      if (saved === undefined) return DustWallet(cfg).startWithSeed(seeds.dust, parameters.dust);
+      const wallet = DustWallet(cfg).restore(saved.dust);
+      await wallet.startWithSeed(seeds.dust);
+      return wallet;
+    },
   });
   await facade.start(seeds);
   return facade;
@@ -246,6 +301,18 @@ const percent = (progress: Progress) => {
   return total === 0 ? "starting" : `${Math.floor((100 * done) / total)}% (${done.toLocaleString("en")} of ${total.toLocaleString("en")})`;
 };
 
+class SyncTimeout extends Error {}
+
+async function saveWallet(facade: WalletFacade, network: string, seed: Uint8Array, file: string): Promise<void> {
+  const saved: SavedWallet = {
+    network,
+    shielded: await facade.shielded.serializeState(),
+    unshielded: await facade.unshielded.serializeState(),
+    dust: await facade.dust.serializeState(),
+  };
+  fs.writeFileSync(file, sealWallet(saved, seed));
+}
+
 // Syncing from genesis is slow on a long chain, so this reports progress every minute.
 async function syncedState(facade: WalletFacade): Promise<WalletState> {
   const started = Date.now();
@@ -264,7 +331,7 @@ async function syncedState(facade: WalletFacade): Promise<WalletState> {
         Rx.filter((state) => state.isSynced),
         Rx.timeout({
           first: SYNC_TIMEOUT_MS,
-          with: () => Rx.throwError(() => new Error(`The wallet hadn't synced after ${SYNC_TIMEOUT_MS / 60_000} minutes`)),
+          with: () => Rx.throwError(() => new SyncTimeout(`The wallet hadn't synced after ${SYNC_TIMEOUT_MS / 60_000} minutes`)),
         }),
       ),
     );
@@ -322,7 +389,7 @@ async function deployedState(indexerHttp: string, address: string): Promise<ledg
   throw new Error(`The indexer never saw a contract at ${address}`);
 }
 
-async function main() {
+async function main(): Promise<number> {
   const id = process.env.MIDNIGHT_NETWORK ?? "undeployed";
   const network = NETWORKS[id];
   if (network === undefined) {
@@ -331,12 +398,29 @@ async function main() {
   const urls = endpoints(network);
   const contractDir = path.resolve(process.env.CONTRACT_DIR ?? CONTRACT_DIR);
   const parameters = await chainParameters(urls.indexerHttp);
+  const syncOnly = process.argv.includes("--sync-only");
+  const stateFile = process.env.MIDNIGHT_WALLET_STATE;
+  if (syncOnly && !stateFile) throw new Error("--sync-only needs MIDNIGHT_WALLET_STATE");
+  const seed = masterSeed(requireEnv("MIDNIGHT_SEED"));
+  const saved =
+    stateFile && fs.existsSync(stateFile) ? openWalletState(fs.readFileSync(stateFile), seed, id) : undefined;
 
-  const facade = await openWallet(id, urls, requireEnv("MIDNIGHT_SEED"), parameters);
+  const facade = await openWallet(id, urls, seed, parameters, saved);
   try {
-    console.error("Syncing the wallet from genesis");
-    await syncedState(facade);
+    console.error(saved === undefined ? "Syncing the wallet from genesis" : "Resuming the wallet's sync");
+    try {
+      await syncedState(facade);
+    } catch (error) {
+      if (!(error instanceof SyncTimeout) || !stateFile) throw error;
+      await saveWallet(facade, id, seed, stateFile);
+      console.error(`${error.message}, so saved its progress to resume from`);
+      return SYNC_UNFINISHED;
+    }
     console.error("Synced");
+    if (syncOnly) {
+      await saveWallet(facade, id, seed, stateFile!);
+      return 0;
+    }
     const { shielded } = await settledState(facade);
     const deploy = await immutableDeployment(shielded.coinPublicKey.toHexString(), contractDir);
     const ttl = new Date(Date.now() + TX_TTL_MS);
@@ -358,6 +442,7 @@ async function main() {
     console.log(`circuits:    ${deploy.initialState.operations().map(String).toSorted().join(", ")}, keys as built`);
     // The next process syncs from the indexer, so don't leave before this wallet's spends show there.
     await settledState(facade);
+    return 0;
   } finally {
     await facade.stop();
   }
@@ -365,7 +450,7 @@ async function main() {
 
 if (import.meta.main) {
   main().then(
-    () => process.exit(0),
+    (code) => process.exit(code),
     (error: unknown) => {
       console.error(error instanceof Error ? error.message : error);
       process.exit(1);

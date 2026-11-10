@@ -81,8 +81,9 @@ This pays the fee from the wallet with that seed, using a proof server on `127.0
 - Preprod and mainnet are served through Blockfrost, so they need `BLOCKFROST_PROJECT_ID` set to a token for that network.
 - `CONTRACT_DIR` deploys another compiled contract instead of `contract/managed/shielded-pools`.
 - `MIDNIGHT_SYNC_MINUTES` sets how long the wallet may take to sync from genesis, 300 by default. In November 2026 that took 57 minutes on mainnet and about 4 hours on preprod.
+- `MIDNIGHT_WALLET_STATE` names a file to carry a long sync over several runs. When the sync runs out of time, its progress is saved there, encrypted to the seed, and the script exits with code 75. The next run resumes from it. `npm run -s deploy -- --sync-only` stops once the wallet has synced, and saves it there for the run that deploys.
 
-Public networks use the [deploy workflow](.github/workflows/deploy.yml). Run it from `main` with a published version. It builds that version from its tag, and refuses to deploy unless the build matches the npm package byte for byte.
+Public networks use the [deploy workflow](.github/workflows/deploy.yml). Run it from `main` with a published version. It builds that version from its tag, and refuses to deploy unless the build matches the npm package byte for byte. A run has 12 hours: the wallet's sync can carry over two jobs of nearly 5 hours each, since GitHub stops a job after 6, and the deploy itself gets a third job.
 
 ## License
 
